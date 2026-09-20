@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # =============================================================================
-# Intelligent Docker Engine Installer (Online + Pure Offline)
+# Docker Air-Gapped Smart Installer
+# Intelligent offline-capable Docker Engine installer with multi-mirror fallback
 # Compatible with Bash 3.2+ (macOS) and modern Linux
-# Target: Ubuntu 26.04 (resolute) & Debian 13 / MX Linux 25 (trixie)
-# Default architecture: amd64 (only downloads arm64 if user explicitly types "arm")
 # =============================================================================
+
+VERSION="1.1.0"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,47 +16,152 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${CYAN}==============================================================${NC}"
-echo -e "${CYAN}  Intelligent Docker Engine Installer (Online + Offline)${NC}"
-echo -e "${CYAN}  Designed for Air-gapped & Sanctioned Environments${NC}"
-echo -e "${CYAN}==============================================================${NC}"
-echo
-
 log_info()  { echo -e "${GREEN}→ $1${NC}"; }
 log_warn()  { echo -e "${YELLOW}⚠  $1${NC}"; }
 log_error() { echo -e "${RED}ERROR: $1${NC}"; }
 log_step()  { echo -e "${BLUE}[ $1 ]${NC}"; }
 
+usage() {
+  cat << EOF
+Docker Air-Gapped Smart Installer v${VERSION}
+
+Usage:
+  $0 [OPTIONS]
+
+Options:
+  --distro <ubuntu|debian>     Target distribution
+  --codename <name>            Codename (resolute, trixie, noble, bookworm, ...)
+  --arch <amd64|arm64>         Architecture (default: amd64)
+  --offline <dir>              Pure offline install from directory
+  --yes, -y                    Non-interactive mode (assume defaults / provided values)
+  --dry-run                    Show what would be done without making changes
+  --list-mirrors               List configured mirrors and exit
+  --skip-test                  Skip post-install hello-world test
+  --keep-temp                  Do not remove temporary download directory
+  --help, -h                   Show this help
+
+Examples:
+  $0
+  $0 --distro ubuntu --codename resolute --arch amd64 --yes
+  $0 --offline ./docker-packages
+  $0 --list-mirrors
+
+EOF
+  exit 0
+}
+
 # --------------------------------------------------------------------------
-# Architecture selection (Default = amd64)
+# Defaults & argument parsing
 # --------------------------------------------------------------------------
+DISTRO=""
+CODENAME=""
 ARCH="amd64"
+OFFLINE_MODE=false
+OFFLINE_DIR=""
+NON_INTERACTIVE=false
+DRY_RUN=false
+LIST_MIRRORS=false
+SKIP_TEST=false
+KEEP_TEMP=false
 
-echo -e "${YELLOW}Architecture selection:${NC}"
-echo -e "  Default is ${GREEN}amd64${NC} (recommended for most servers and desktops)"
-echo -e "  Only type ${CYAN}arm${NC} if you really need arm64 packages"
-echo
-printf "Enter architecture [amd64] (type 'arm' for arm64, or just press Enter): "
-read ARCH_INPUT
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --distro)      DISTRO="$2"; shift 2 ;;
+    --codename)    CODENAME="$2"; shift 2 ;;
+    --arch)        ARCH="$2"; shift 2 ;;
+    --offline|-o)  OFFLINE_MODE=true; OFFLINE_DIR="$2"; shift 2 ;;
+    --yes|-y)      NON_INTERACTIVE=true; shift ;;
+    --dry-run)     DRY_RUN=true; shift ;;
+    --list-mirrors) LIST_MIRRORS=true; shift ;;
+    --skip-test)   SKIP_TEST=true; shift ;;
+    --keep-temp)   KEEP_TEMP=true; shift ;;
+    --help|-h)     usage ;;
+    *) log_error "Unknown option: $1"; usage ;;
+  esac
+done
 
-# Normalize input
-ARCH_INPUT=$(echo "${ARCH_INPUT:-}" | tr '[:upper:]' '[:lower:]' | xargs)
+# Normalize
+DISTRO=$(echo "$DISTRO" | tr '[:upper:]' '[:lower:]')
+CODENAME=$(echo "$CODENAME" | tr '[:upper:]' '[:lower:]')
+ARCH=$(echo "$ARCH" | tr '[:upper:]' '[:lower:]')
 
-if [ "$ARCH_INPUT" = "arm" ] || [ "$ARCH_INPUT" = "arm64" ] || [ "$ARCH_INPUT" = "aarch64" ]; then
-  ARCH="arm64"
-  log_warn "You explicitly selected arm64"
-else
-  ARCH="amd64"
-  log_info "Using default architecture: amd64"
+case "$ARCH" in
+  amd64|arm64) ;;
+  arm|aarch64) ARCH="arm64" ;;
+  *) log_error "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+# --------------------------------------------------------------------------
+# Mirrors
+# --------------------------------------------------------------------------
+MIRRORS="
+https://download.docker.com/linux
+https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux
+https://mirrors.ustc.edu.cn/docker-ce/linux
+https://mirrors.pku.edu.cn/docker-ce/linux
+https://mirrors.aliyun.com/docker-ce/linux
+https://mirrors.cloud.tencent.com/docker-ce/linux
+https://mirror.arvancloud.ir/docker-ce/linux
+https://mirrors.iranserver.com/docker-ce/linux
+"
+
+if [ "$LIST_MIRRORS" = true ]; then
+  echo "Configured mirrors (in priority order):"
+  i=1
+  for m in $MIRRORS; do
+    echo "  $i. $m"
+    i=$((i+1))
+  done
+  exit 0
 fi
 
+echo -e "${CYAN}==============================================================${NC}"
+echo -e "${CYAN}  Docker Air-Gapped Smart Installer v${VERSION}${NC}"
+echo -e "${CYAN}  Multi-mirror • Offline-capable • Sanction-friendly${NC}"
+echo -e "${CYAN}==============================================================${NC}"
 echo
 
+if [ "$DRY_RUN" = true ]; then
+  log_warn "DRY-RUN mode enabled — no changes will be made"
+  echo
+fi
+
 # --------------------------------------------------------------------------
-# OS Detection + Interactive menu
+# Proxy support
 # --------------------------------------------------------------------------
-DOCKER_DIST=""
-CODENAME=""
+if [ -n "${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}" ]; then
+  log_info "Proxy environment variables detected — curl will use them"
+fi
+
+# --------------------------------------------------------------------------
+# Architecture interactive selection (only if not provided)
+# --------------------------------------------------------------------------
+if [ -z "$ARCH" ] || [ "$ARCH" = "amd64" ]; then
+  if [ "$NON_INTERACTIVE" = false ] && [ -z "${ARCH_FROM_CLI:-}" ]; then
+    # Only ask if user did not pass --arch
+    if ! echo "$*" | grep -q -- '--arch'; then
+      echo -e "${YELLOW}Architecture selection:${NC}"
+      echo -e "  Default is ${GREEN}amd64${NC} (recommended for most servers and desktops)"
+      echo -e "  Only type ${CYAN}arm${NC} if you really need arm64 packages"
+      echo
+      printf "Enter architecture [amd64] (type 'arm' for arm64, or just press Enter): "
+      read ARCH_INPUT
+      ARCH_INPUT=$(echo "${ARCH_INPUT:-}" | tr '[:upper:]' '[:lower:]' | xargs)
+      if [ "$ARCH_INPUT" = "arm" ] || [ "$ARCH_INPUT" = "arm64" ] || [ "$ARCH_INPUT" = "aarch64" ]; then
+        ARCH="arm64"
+        log_warn "You explicitly selected arm64"
+      else
+        ARCH="amd64"
+        log_info "Using default architecture: amd64"
+      fi
+      echo
+    fi
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# OS Detection
+# --------------------------------------------------------------------------
 IS_SUPPORTED_LINUX=false
 CURRENT_OS="unknown"
 
@@ -65,13 +171,13 @@ if [ -f /etc/os-release ]; then
 
   case "$ID" in
     ubuntu)
-      DOCKER_DIST="ubuntu"
-      CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
+      if [ -z "$DISTRO" ]; then DISTRO="ubuntu"; fi
+      if [ -z "$CODENAME" ]; then CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"; fi
       IS_SUPPORTED_LINUX=true
       ;;
     debian|mx)
-      DOCKER_DIST="debian"
-      CODENAME="$VERSION_CODENAME"
+      if [ -z "$DISTRO" ]; then DISTRO="debian"; fi
+      if [ -z "$CODENAME" ]; then CODENAME="$VERSION_CODENAME"; fi
       IS_SUPPORTED_LINUX=true
       ;;
   esac
@@ -79,7 +185,13 @@ else
   CURRENT_OS="$(uname -s) $(uname -r)"
 fi
 
-if [ -z "$DOCKER_DIST" ] || [ -z "$CODENAME" ]; then
+# Interactive selection if still missing
+if [ -z "$DISTRO" ] || [ -z "$CODENAME" ]; then
+  if [ "$NON_INTERACTIVE" = true ]; then
+    log_error "Non-interactive mode requires --distro and --codename"
+    exit 1
+  fi
+
   echo -e "${YELLOW}Could not automatically detect a supported Linux distribution.${NC}"
   echo -e "${YELLOW}Current system: ${CURRENT_OS}${NC}"
   echo
@@ -87,55 +199,35 @@ if [ -z "$DOCKER_DIST" ] || [ -z "$CODENAME" ]; then
   echo
   echo "  1) Ubuntu 26.04 (resolute)           ← Production Server"
   echo "  2) Debian 13 / MX Linux 25 (trixie)  ← Development Desktop"
-  echo "  3) Enter custom values manually"
+  echo "  3) Ubuntu 24.04 (noble)"
+  echo "  4) Debian 12 (bookworm)"
+  echo "  5) Enter custom values manually"
   echo
-  printf "Enter your choice [1-3]: "
+  printf "Enter your choice [1-5]: "
   read CHOICE
 
   case "$CHOICE" in
-    1)
-      DOCKER_DIST="ubuntu"
-      CODENAME="resolute"
-      ;;
-    2)
-      DOCKER_DIST="debian"
-      CODENAME="trixie"
-      ;;
-    3)
+    1) DISTRO="ubuntu"; CODENAME="resolute" ;;
+    2) DISTRO="debian"; CODENAME="trixie" ;;
+    3) DISTRO="ubuntu"; CODENAME="noble" ;;
+    4) DISTRO="debian"; CODENAME="bookworm" ;;
+    5)
       printf "Enter Docker distribution (ubuntu or debian): "
-      read DOCKER_DIST
-      printf "Enter codename (e.g. resolute, trixie): "
+      read DISTRO
+      printf "Enter codename: "
       read CODENAME
-      DOCKER_DIST=$(echo "$DOCKER_DIST" | tr '[:upper:]' '[:lower:]')
+      DISTRO=$(echo "$DISTRO" | tr '[:upper:]' '[:lower:]')
       CODENAME=$(echo "$CODENAME" | tr '[:upper:]' '[:lower:]')
       ;;
-    *)
-      log_error "Invalid choice."
-      exit 1
-      ;;
+    *) log_error "Invalid choice."; exit 1 ;;
   esac
 fi
 
-log_info "Selected Docker repository : $DOCKER_DIST"
+log_info "Selected Docker repository : $DISTRO"
 log_info "Selected Codename          : $CODENAME"
 log_info "Architecture               : $ARCH"
 log_info "Current system             : $CURRENT_OS"
 echo
-
-# --------------------------------------------------------------------------
-# Offline mode check
-# --------------------------------------------------------------------------
-OFFLINE_MODE=false
-LOCAL_DIR=""
-
-if [ "${1:-}" = "--offline" ] || [ "${1:-}" = "-o" ]; then
-  OFFLINE_MODE=true
-  LOCAL_DIR="${2:-.}"
-elif [ -d "./docker-packages" ] && [ -f "./docker-packages/docker.gpg" ]; then
-  OFFLINE_MODE=true
-  LOCAL_DIR="./docker-packages"
-  log_warn "Found existing docker-packages folder → switching to pure offline mode"
-fi
 
 # --------------------------------------------------------------------------
 # Pure Offline Installation
@@ -144,12 +236,12 @@ if [ "$OFFLINE_MODE" = true ]; then
   log_step "Pure Offline Mode Activated"
   echo
 
-  if [ ! -d "$LOCAL_DIR" ]; then
-    log_error "Local package directory not found: $LOCAL_DIR"
+  if [ ! -d "$OFFLINE_DIR" ]; then
+    log_error "Local package directory not found: $OFFLINE_DIR"
     exit 1
   fi
 
-  cd "$LOCAL_DIR"
+  cd "$OFFLINE_DIR"
   log_info "Using packages from: $(pwd)"
   echo
 
@@ -161,9 +253,29 @@ if [ "$OFFLINE_MODE" = true ]; then
     fi
   done
 
+  # Optional SHA256 verification
+  if [ -f SHA256SUMS ]; then
+    log_step "Verifying SHA256 checksums..."
+    if command -v sha256sum >/dev/null 2>&1; then
+      if sha256sum -c SHA256SUMS --ignore-missing; then
+        log_info "Checksums verified successfully"
+      else
+        log_error "Checksum verification failed"
+        exit 1
+      fi
+    else
+      log_warn "sha256sum not available — skipping checksum verification"
+    fi
+  fi
+
   if [ "$IS_SUPPORTED_LINUX" != true ]; then
     log_error "This system is not Ubuntu or Debian/MX Linux. Cannot install .deb packages."
     exit 1
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[DRY-RUN] Would install packages and enable docker service"
+    exit 0
   fi
 
   log_step "Removing conflicting packages..."
@@ -208,23 +320,12 @@ if [ "$OFFLINE_MODE" = true ]; then
 fi
 
 # --------------------------------------------------------------------------
-# Online Mode - Download with fallback mirrors
+# Online Mode - Download
 # --------------------------------------------------------------------------
 log_step "Online Mode – Downloading latest packages with fallback mirrors"
 echo
 
-MIRRORS="
-https://download.docker.com/linux
-https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux
-https://mirrors.ustc.edu.cn/docker-ce/linux
-https://mirrors.pku.edu.cn/docker-ce/linux
-https://mirrors.aliyun.com/docker-ce/linux
-https://mirrors.cloud.tencent.com/docker-ce/linux
-https://mirror.arvancloud.ir/docker-ce/linux
-https://mirrors.iranserver.com/docker-ce/linux
-"
-
-WORKDIR="docker-offline-${DOCKER_DIST}-${CODENAME}-${ARCH}-$(date +%Y%m%d-%H%M%S)"
+WORKDIR="docker-offline-${DISTRO}-${CODENAME}-${ARCH}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 log_info "Working directory: $(pwd)"
@@ -232,10 +333,11 @@ echo
 
 PACKAGES="containerd.io docker-ce-cli docker-ce docker-buildx-plugin docker-compose-plugin"
 download_success=false
+USED_MIRROR=""
 
 for MIRROR in $MIRRORS; do
-  BASE_URL="${MIRROR}/${DOCKER_DIST}/dists/${CODENAME}/pool/stable/${ARCH}/"
-  GPG_URL="${MIRROR}/${DOCKER_DIST}/gpg"
+  BASE_URL="${MIRROR}/${DISTRO}/dists/${CODENAME}/pool/stable/${ARCH}/"
+  GPG_URL="${MIRROR}/${DISTRO}/gpg"
 
   log_info "Trying mirror: $MIRROR"
 
@@ -255,7 +357,6 @@ for MIRROR in $MIRRORS; do
     continue
   fi
 
-  # Find latest version of each package (Bash 3.2 compatible)
   LATEST_containerd=""
   LATEST_cli=""
   LATEST_ce=""
@@ -284,17 +385,22 @@ for MIRROR in $MIRRORS; do
 
   for file in "$LATEST_containerd" "$LATEST_cli" "$LATEST_ce" "$LATEST_buildx" "$LATEST_compose"; do
     echo -n "   → $file ... "
-    if curl -fsSL --connect-timeout 20 -o "$file" "${BASE_URL}${file}"; then
-      echo -e "${GREEN}OK${NC}"
+    if [ "$DRY_RUN" = true ]; then
+      echo -e "${YELLOW}DRY-RUN${NC}"
     else
-      echo -e "${RED}FAILED${NC}"
-      download_ok=false
-      break
+      if curl -fsSL --connect-timeout 20 -o "$file" "${BASE_URL}${file}"; then
+        echo -e "${GREEN}OK${NC}"
+      else
+        echo -e "${RED}FAILED${NC}"
+        download_ok=false
+        break
+      fi
     fi
   done
 
   if [ "$download_ok" = true ]; then
     download_success=true
+    USED_MIRROR="$MIRROR"
     log_info "Successfully downloaded from: $MIRROR"
     break
   else
@@ -310,10 +416,21 @@ fi
 echo
 log_step "Packages downloaded successfully."
 
+# Generate SHA256SUMS
+if [ "$DRY_RUN" = false ]; then
+  log_step "Generating SHA256SUMS..."
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum docker.gpg *.deb > SHA256SUMS
+    log_info "SHA256SUMS created"
+  else
+    log_warn "sha256sum not available — checksum file not generated"
+  fi
+fi
+
 # --------------------------------------------------------------------------
 # Install only on supported Linux
 # --------------------------------------------------------------------------
-if [ "$IS_SUPPORTED_LINUX" = true ]; then
+if [ "$IS_SUPPORTED_LINUX" = true ] && [ "$DRY_RUN" = false ]; then
   log_step "Supported Linux detected → Installing Docker..."
 
   sudo apt-get remove -y \
@@ -341,24 +458,40 @@ if [ "$IS_SUPPORTED_LINUX" = true ]; then
     sudo usermod -aG docker "$REAL_USER"
     log_info "User '$REAL_USER' added to docker group"
   fi
+
+  # Post-install test
+  if [ "$SKIP_TEST" = false ]; then
+    log_step "Running post-install test (hello-world)..."
+    if timeout 30 docker run --rm hello-world >/dev/null 2>&1; then
+      log_info "Post-install test passed"
+    else
+      log_warn "Post-install test failed or timed out (this is OK on restricted networks)"
+    fi
+  fi
 else
-  log_warn "Current system is not Ubuntu or Debian/MX Linux."
-  log_warn "Packages were downloaded only (installation skipped)."
+  if [ "$IS_SUPPORTED_LINUX" != true ]; then
+    log_warn "Current system is not Ubuntu or Debian/MX Linux."
+    log_warn "Packages were downloaded only (installation skipped)."
+  fi
 fi
 
 # --------------------------------------------------------------------------
-# Create offline package folder + README
+# Create offline package folder
 # --------------------------------------------------------------------------
-OFFLINE_DIR="../docker-packages"
-mkdir -p "$OFFLINE_DIR"
-cp docker.gpg *.deb "$OFFLINE_DIR/" 2>/dev/null || true
+FINAL_DIR="../docker-packages"
+mkdir -p "$FINAL_DIR"
 
-cat > "$OFFLINE_DIR/README.md" << EOF
+if [ "$DRY_RUN" = false ]; then
+  cp docker.gpg *.deb SHA256SUMS "$FINAL_DIR/" 2>/dev/null || true
+
+  cat > "$FINAL_DIR/README.md" << EOF
 # Docker Offline Packages
 
-**Generated on:** $(date)
-**Target OS:** $DOCKER_DIST ($CODENAME)
+**Generated on:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+**Installer version:** ${VERSION}
+**Target OS:** $DISTRO ($CODENAME)
 **Architecture:** $ARCH
+**Source mirror:** $USED_MIRROR
 **Generated on system:** $CURRENT_OS
 
 ## Contents
@@ -368,20 +501,30 @@ cat > "$OFFLINE_DIR/README.md" << EOF
 - docker-ce-cli_*.deb
 - docker-buildx-plugin_*.deb
 - docker-compose-plugin_*.deb
+- SHA256SUMS
 
-## How to install on air-gapped Ubuntu / Debian / MX Linux
+## Verify integrity
+
+\`\`\`bash
+sha256sum -c SHA256SUMS
+\`\`\`
+
+## Install on air-gapped machine
 
 \`\`\`bash
 sudo ./install-docker-smart.sh --offline /path/to/this/folder
 \`\`\`
-
-Or manually:
-\`\`\`bash
-sudo dpkg -i *.deb
-sudo systemctl enable --now docker
-sudo usermod -aG docker \$USER
-\`\`\`
 EOF
+
+  log_info "Offline package folder created: $FINAL_DIR"
+fi
+
+# Cleanup temp directory
+if [ "$KEEP_TEMP" = false ] && [ "$DRY_RUN" = false ]; then
+  cd ..
+  rm -rf "$WORKDIR"
+  log_info "Temporary directory cleaned up"
+fi
 
 echo
 echo -e "${GREEN}==============================================================${NC}"
@@ -390,18 +533,19 @@ echo -e "${GREEN}==============================================================$
 echo
 echo -e "${YELLOW}Summary:${NC}"
 echo "  • Architecture used     : $ARCH"
-echo "  • Packages saved in     : $OFFLINE_DIR"
-echo "  • README.md created."
+echo "  • Target               : $DISTRO ($CODENAME)"
+echo "  • Packages saved in    : $FINAL_DIR"
+echo "  • SHA256SUMS generated : yes"
 echo
 
-if [ "$IS_SUPPORTED_LINUX" = true ]; then
+if [ "$IS_SUPPORTED_LINUX" = true ] && [ "$DRY_RUN" = false ]; then
   echo -e "${GREEN}Docker has been installed on this machine.${NC}"
   docker --version 2>/dev/null || true
   docker compose version 2>/dev/null || true
   echo
-  echo -e "${YELLOW}Please log out and log back in (or reboot).${NC}"
+  echo -e "${YELLOW}Please log out and log back in (or reboot) for group changes.${NC}"
 else
-  echo -e "${YELLOW}You are on macOS / non-Linux → packages were only downloaded.${NC}"
-  echo "Copy the 'docker-packages' folder to your Ubuntu or MX Linux machine."
+  echo -e "${YELLOW}Packages were prepared for offline use.${NC}"
+  echo "Copy the 'docker-packages' folder to your target Linux machine."
 fi
 echo

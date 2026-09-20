@@ -1,88 +1,61 @@
 # Docker Air-Gapped Smart Installer
 
-**Intelligent, multi-mirror, offline-capable Docker Engine installer** designed for air-gapped environments and regions affected by network restrictions or sanctions.
+**Intelligent, multi-mirror, offline-capable Docker Engine installer** designed for air-gapped environments and regions with network restrictions.
 
-> Specially built for reliable Docker installation on **Ubuntu 26.04 LTS (resolute)** and **Debian 13 / MX Linux 25 (trixie)**.
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/mortezabahmani/docker-airgappd-smartinstaller)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> 📖 **نسخه فارسی مستندات در دسترس است** → [README-fa.md](README-fa.md)
 
 ---
 
 ## Features
 
-- **Dual Mode Operation**
-  - **Online Mode**: Automatically downloads the latest Docker Engine packages from multiple mirrors with intelligent fallback.
-  - **Pure Offline Mode**: Installs from a previously prepared package folder without any internet access.
-
-- **Smart Detection**
-  - Automatically detects Ubuntu or Debian/MX Linux.
-  - Interactive menu when running on macOS or unsupported systems.
-
-- **Architecture Handling**
-  - Defaults to **amd64** (recommended for most servers and desktops).
-  - Downloads **arm64** packages only if the user explicitly types `arm`.
-
-- **Multi-Mirror Fallback**
-  - Official Docker repository
-  - Multiple Chinese university mirrors (Tsinghua, USTC, PKU, Aliyun, Tencent)
-  - Iranian mirrors as last resort
-
-- **Air-Gapped Ready**
-  - Creates a clean `docker-packages/` folder containing all `.deb` files + GPG key + README.
-  - Perfect for transferring to isolated production servers.
-
-- **Bash 3.2 Compatible**
-  - Works on macOS default Bash as well as modern Linux systems.
+| Feature | Description |
+|---------|-------------|
+| **Dual Mode** | Online download with multi-mirror fallback + Pure offline installation |
+| **Non-Interactive** | Fully scriptable with `--distro`, `--codename`, `--arch`, `--yes` |
+| **Integrity** | Generates and verifies `SHA256SUMS` |
+| **Multi-Arch** | Defaults to `amd64`, supports `arm64` on explicit request |
+| **Multi-Distro** | Ubuntu (resolute, noble, ...) and Debian (trixie, bookworm, ...) |
+| **Proxy Aware** | Respects `http_proxy` / `https_proxy` environment variables |
+| **Dry-Run** | `--dry-run` mode to preview actions |
+| **Post-Install Test** | Optional `docker run hello-world` verification |
+| **Bash 3.2+** | Works on macOS default Bash and modern Linux |
 
 ---
 
 ## Supported Targets
 
-| Distribution              | Codename  | Recommended Use          |
-|---------------------------|-----------|--------------------------|
-| Ubuntu 26.04 LTS          | resolute  | Production Server        |
-| Debian 13 / MX Linux 25   | trixie    | Development Desktop      |
+| Distribution | Codename | Typical Use |
+|--------------|----------|-------------|
+| Ubuntu 26.04 LTS | `resolute` | Production servers |
+| Ubuntu 24.04 LTS | `noble` | Production / LTS environments |
+| Debian 13 | `trixie` | Development desktops (e.g. MX Linux 25) |
+| Debian 12 | `bookworm` | Stable servers |
 
 ---
 
 ## Quick Start
 
-### 1. Download the script
-
 ```bash
-curl -fsSL -o install-docker-smart.sh \
-  https://raw.githubusercontent.com/mortezabahmani/docker-airgappd-smartinstaller/main/install-docker-smart.sh
-
 chmod +x install-docker-smart.sh
-```
-
-> Note: Since this is a private repository, you may need to authenticate or download the file manually from GitHub.
-
-### 2. Run the installer
-
-```bash
 ./install-docker-smart.sh
 ```
 
-The script will:
+The script will guide you interactively.
 
-1. Ask for architecture (just press **Enter** for amd64).
-2. Detect the OS or ask you to choose Ubuntu / Debian.
-3. Download the latest packages using the best available mirror.
-4. Install Docker if running on a supported Linux system.
-5. Create a reusable offline package folder.
-
----
-
-## Usage Modes
-
-### Online Mode (Default)
+### Non-Interactive Example
 
 ```bash
-./install-docker-smart.sh
+./install-docker-smart.sh \
+  --distro ubuntu \
+  --codename resolute \
+  --arch amd64 \
+  --yes
 ```
 
-### Pure Offline Mode
-
-After you have prepared the packages on a machine with internet:
+### Pure Offline Install
 
 ```bash
 sudo ./install-docker-smart.sh --offline /path/to/docker-packages
@@ -90,43 +63,48 @@ sudo ./install-docker-smart.sh --offline /path/to/docker-packages
 
 ---
 
-## Recommended Workflow (Air-Gapped Deployment)
+## Command Line Options
 
-1. **On a machine with internet** (can be macOS or Linux):
+```
+--distro <ubuntu|debian>     Target distribution
+--codename <name>            Codename (resolute, trixie, noble, bookworm, ...)
+--arch <amd64|arm64>         Architecture (default: amd64)
+--offline <dir>              Pure offline install from directory
+--yes, -y                    Non-interactive mode
+--dry-run                    Show actions without executing them
+--list-mirrors               List configured mirrors and exit
+--skip-test                  Skip post-install hello-world test
+--keep-temp                  Keep temporary download directory
+--help, -h                   Show help
+```
+
+---
+
+## Recommended Air-Gapped Workflow
+
+1. **On a machine with internet access** (macOS or Linux):
 
    ```bash
-   ./install-docker-smart.sh
+   ./install-docker-smart.sh --distro ubuntu --codename resolute --arch amd64 --yes
    ```
 
-   - Choose architecture (default amd64)
-   - Choose target OS (Ubuntu 26.04 or Debian/MX)
-   - Let it download the packages
-
-2. **Copy the generated folder** to the target air-gapped machine:
+2. **Transfer the generated folder**:
 
    ```bash
-   scp -r docker-packages/ user@airgapped-server:/tmp/
+   scp -r docker-packages/ user@airgapped-host:/opt/
    ```
 
 3. **On the air-gapped machine**:
 
    ```bash
-   cd /tmp/docker-packages
-   sudo /path/to/install-docker-smart.sh --offline .
+   sudo ./install-docker-smart.sh --offline /opt/docker-packages
    ```
 
----
-
-## What Gets Downloaded
-
-The script downloads the latest versions of:
-
-- `containerd.io`
-- `docker-ce`
-- `docker-ce-cli`
-- `docker-buildx-plugin`
-- `docker-compose-plugin`
-- Official Docker GPG key
+The offline folder contains:
+- All required `.deb` packages
+- Docker GPG key
+- `SHA256SUMS` for integrity verification
+- A small README with install instructions
 
 ---
 
@@ -134,27 +112,57 @@ The script downloads the latest versions of:
 
 1. Official Docker (`download.docker.com`)
 2. Tsinghua University
-3. USTC
+3. University of Science and Technology of China (USTC)
 4. Peking University
 5. Aliyun
 6. Tencent Cloud
-7. ArvanCloud (Iran)
-8. IranServer (Iran)
+7. ArvanCloud
+8. IranServer
+
+You can list them anytime:
+
+```bash
+./install-docker-smart.sh --list-mirrors
+```
 
 ---
 
-## Notes
+## Integrity Verification
 
-- After installation, log out and log back in (or reboot) so that the `docker` group membership takes effect.
-- The script is intentionally conservative: it only installs packages when running on a real Ubuntu or Debian/MX system.
-- On macOS it only downloads the packages and prepares the offline folder.
+After download, a `SHA256SUMS` file is generated.
+
+On the target machine you can verify before installation:
+
+```bash
+cd docker-packages
+sha256sum -c SHA256SUMS
+```
+
+---
+
+## Security Notes
+
+- The script only installs packages when it detects a real Ubuntu or Debian-based system.
+- On macOS and other systems it only downloads and prepares the offline bundle.
+- GPG key is installed into `/etc/apt/keyrings` using modern practices.
+- No `eval` is used on external data.
+- Temporary directories are cleaned up by default.
+
+---
+
+## Requirements
+
+- `bash` 3.2 or newer
+- `curl`
+- `dpkg` / `apt` (for installation on target)
+- `sha256sum` (recommended for integrity checks)
 
 ---
 
 ## License
 
-MIT License – feel free to use and modify for your air-gapped deployments.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-**Maintained for reliable Docker installation in restricted network environments.**
+**Built for reliable Docker Engine installation in restricted and air-gapped environments.**
