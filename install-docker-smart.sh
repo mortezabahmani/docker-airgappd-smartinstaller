@@ -64,12 +64,22 @@ LIST_MIRRORS=false
 SKIP_TEST=false
 KEEP_TEMP=false
 
+ARCH_SET_VIA_CLI=false
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --distro)      DISTRO="$2"; shift 2 ;;
-    --codename)    CODENAME="$2"; shift 2 ;;
-    --arch)        ARCH="$2"; shift 2 ;;
-    --offline|-o)  OFFLINE_MODE=true; OFFLINE_DIR="$2"; shift 2 ;;
+    --distro)
+      [ $# -gt 1 ] || { log_error "Option --distro requires an argument"; exit 1; }
+      DISTRO="$2"; shift 2 ;;
+    --codename)
+      [ $# -gt 1 ] || { log_error "Option --codename requires an argument"; exit 1; }
+      CODENAME="$2"; shift 2 ;;
+    --arch)
+      [ $# -gt 1 ] || { log_error "Option --arch requires an argument"; exit 1; }
+      ARCH="$2"; ARCH_SET_VIA_CLI=true; shift 2 ;;
+    --offline|-o)
+      [ $# -gt 1 ] || { log_error "Option --offline requires an argument"; exit 1; }
+      OFFLINE_MODE=true; OFFLINE_DIR="$2"; shift 2 ;;
     --yes|-y)      NON_INTERACTIVE=true; shift ;;
     --dry-run)     DRY_RUN=true; shift ;;
     --list-mirrors) LIST_MIRRORS=true; shift ;;
@@ -136,27 +146,22 @@ fi
 # --------------------------------------------------------------------------
 # Architecture interactive selection (only if not provided)
 # --------------------------------------------------------------------------
-if [ -z "$ARCH" ] || [ "$ARCH" = "amd64" ]; then
-  if [ "$NON_INTERACTIVE" = false ] && [ -z "${ARCH_FROM_CLI:-}" ]; then
-    # Only ask if user did not pass --arch
-    if ! echo "$*" | grep -q -- '--arch'; then
-      echo -e "${YELLOW}Architecture selection:${NC}"
-      echo -e "  Default is ${GREEN}amd64${NC} (recommended for most servers and desktops)"
-      echo -e "  Only type ${CYAN}arm${NC} if you really need arm64 packages"
-      echo
-      printf "Enter architecture [amd64] (type 'arm' for arm64, or just press Enter): "
-      read ARCH_INPUT
-      ARCH_INPUT=$(echo "${ARCH_INPUT:-}" | tr '[:upper:]' '[:lower:]' | xargs)
-      if [ "$ARCH_INPUT" = "arm" ] || [ "$ARCH_INPUT" = "arm64" ] || [ "$ARCH_INPUT" = "aarch64" ]; then
-        ARCH="arm64"
-        log_warn "You explicitly selected arm64"
-      else
-        ARCH="amd64"
-        log_info "Using default architecture: amd64"
-      fi
-      echo
-    fi
+if [ "$ARCH_SET_VIA_CLI" = false ] && [ "$NON_INTERACTIVE" = false ]; then
+  echo -e "${YELLOW}Architecture selection:${NC}"
+  echo -e "  Default is ${GREEN}amd64${NC} (recommended for most servers and desktops)"
+  echo -e "  Only type ${CYAN}arm${NC} if you really need arm64 packages"
+  echo
+  printf "Enter architecture [amd64] (type 'arm' for arm64, or just press Enter): "
+  read ARCH_INPUT
+  ARCH_INPUT=$(echo "${ARCH_INPUT:-}" | tr '[:upper:]' '[:lower:]' | xargs)
+  if [ "$ARCH_INPUT" = "arm" ] || [ "$ARCH_INPUT" = "aarch64" ] || [ "$ARCH_INPUT" = "arm64" ]; then
+    ARCH="arm64"
+    log_warn "You explicitly selected arm64"
+  else
+    ARCH="amd64"
+    log_info "Using default architecture: amd64"
   fi
+  echo
 fi
 
 # --------------------------------------------------------------------------
