@@ -1,0 +1,17 @@
+# Temporary download directories created by the installer
+docker-offline-*/
+
+# Generated offline package bundles (do not commit binaries)
+docker-packages/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local env
+.env
+.env.*

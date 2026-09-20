@@ -2,7 +2,7 @@
 
 **Intelligent, multi-mirror, offline-capable Docker Engine installer** designed for air-gapped environments and regions with network restrictions.
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/mortezabahmani/docker-airgappd-smartinstaller)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > 📖 **نسخه فارسی مستندات در دسترس است** → [README-fa.md](README-fa.md)
@@ -100,11 +100,9 @@ sudo ./install-docker-smart.sh --offline /path/to/docker-packages
    sudo ./install-docker-smart.sh --offline /opt/docker-packages
    ```
 
-The offline folder contains:
-- All required `.deb` packages
-- Docker GPG key
-- `SHA256SUMS` for integrity verification
-- A small README with install instructions
+The offline folder contains all required `.deb` packages, the Docker GPG key, `SHA256SUMS`, and a small README.
+
+> **Note:** Do not commit `docker-packages/` or `docker-offline-*/` directories to git. They are listed in `.gitignore`.
 
 ---
 
@@ -119,8 +117,6 @@ The offline folder contains:
 7. ArvanCloud
 8. IranServer
 
-You can list them anytime:
-
 ```bash
 ./install-docker-smart.sh --list-mirrors
 ```
@@ -129,10 +125,6 @@ You can list them anytime:
 
 ## Integrity Verification
 
-After download, a `SHA256SUMS` file is generated.
-
-On the target machine you can verify before installation:
-
 ```bash
 cd docker-packages
 sha256sum -c SHA256SUMS
@@ -140,13 +132,19 @@ sha256sum -c SHA256SUMS
 
 ---
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
+
+---
+
 ## Security Notes
 
-- The script only installs packages when it detects a real Ubuntu or Debian-based system.
-- On macOS and other systems it only downloads and prepares the offline bundle.
-- GPG key is installed into `/etc/apt/keyrings` using modern practices.
+- Packages are installed only when a real Ubuntu or Debian-based system is detected.
+- On macOS and other systems the tool only downloads and prepares the offline bundle.
+- GPG key is installed under `/etc/apt/keyrings`.
 - No `eval` is used on external data.
-- Temporary directories are cleaned up by default.
+- Temporary directories are removed by default.
 
 ---
 
@@ -154,8 +152,8 @@ sha256sum -c SHA256SUMS
 
 - `bash` 3.2 or newer
 - `curl`
-- `dpkg` / `apt` (for installation on target)
-- `sha256sum` (recommended for integrity checks)
+- `dpkg` / `apt` (on the install target)
+- `sha256sum` (recommended)
 
 ---
 
